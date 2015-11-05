@@ -1,4 +1,5 @@
 import jsonschema
+import requests
 from cliquet import resource, schema
 from cliquet.errors import raise_invalid
 from jsonschema import exceptions as jsonschema_exceptions
@@ -23,6 +24,15 @@ class Record(resource.ProtectedResource):
     mapping = RecordSchema()
     schema_field = 'schema'
 
+
+    def send_notification(self):
+        header = self.request.headers.get('fxAccountId')
+        if header is not None:
+            self.record_id = header
+            record = super(Record, self).get()
+            url = record["data"]["url"]
+            r = requests.post(url, data={"test":"test"})
+
     def __init__(self, *args, **kwargs):
         super(Record, self).__init__(*args, **kwargs)
 
@@ -39,6 +49,8 @@ class Record(resource.ProtectedResource):
             collections[collection_uri] = collection
 
         self._collection = collections[collection_uri]
+        
+
 
     def get_parent_id(self, request):
         self.bucket_id = request.matchdict['bucket_id']
@@ -58,9 +70,10 @@ class Record(resource.ProtectedResource):
         settings = self.request.registry.settings
         schema_validation = 'experimental_collection_schema_validation'
         if not schema or not asbool(settings.get(schema_validation)):
+            self.send_notification() 
             return new
 
-        collection_timestamp = self._collection[self.model.modified_field]
+        collection_timestamp = self._collection[self.collection.modified_field]
 
         try:
             jsonschema.validate(new, schema)
@@ -68,7 +81,8 @@ class Record(resource.ProtectedResource):
         except jsonschema_exceptions.ValidationError as e:
             field = e.path.pop() if e.path else e.validator_value.pop()
             raise_invalid(self.request, name=field, description=e.message)
-
+            
+        self.send_notification()     
         return new
 
     def collection_get(self):
@@ -90,10 +104,6 @@ class Record(resource.ProtectedResource):
             Those headers are also sent if the
             ``kinto.record_cache_expires_seconds`` setting is defined.
         """
-        is_anonymous = self.request.prefixed_userid is None
-        if not is_anonymous:
-            return
-
         cache_expires = self._collection.get('cache_expires')
         if cache_expires is None:
             by_bucket = 'kinto.%s_record_cache_expires_seconds' % (
